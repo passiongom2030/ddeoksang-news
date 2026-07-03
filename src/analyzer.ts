@@ -17,7 +17,8 @@ export interface Analysis {
   tags: string[];
 }
 
-const MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash-lite";
+// 무료 한도: 2.5-flash-lite는 하루 20건뿐 → 한도 더 높은 2.5-flash 기본 사용
+const MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
 
 // 뉴스 1건 분석 스키마 (배치 배열의 각 원소)
 const ITEM_SCHEMA = {
