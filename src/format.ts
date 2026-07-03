@@ -1,5 +1,6 @@
 import type { NewsArticle } from "./collector.js";
 import type { Analysis } from "./analyzer.js";
+import { matchWatchlist } from "./watchlist.js";
 
 // Slack mrkdwn 이스케이프
 function esc(s: string): string {
@@ -41,9 +42,17 @@ export function formatAnalyzedItem(a: NewsArticle, analysis: Analysis | null): s
 
   // 한국어 제목 우선 (영어 기사도 한글화), 없으면 원제목
   const title = esc(analysis.headline_ko || a.title);
-  const lines: string[] = [`${importanceIcon(analysis.importance)} *${title}*`];
+
+  // 관심종목(워치리스트) 관련이면 ⭐ 강조
+  const watched = matchWatchlist(a, analysis);
+  const star = watched.length ? "⭐ " : "";
+
+  const lines: string[] = [`${star}${importanceIcon(analysis.importance)} *${title}*`];
   if (analysis.summary) lines.push(analysis.summary);
   lines.push("");
+  if (watched.length) {
+    lines.push(`• ⭐ 관심종목: ${watched.map(esc).join(", ")}`);
+  }
   lines.push(
     `• importance: ${analysis.importance} / sentiment: ${sentimentLabel(analysis.sentiment)} / category: ${analysis.category}`
   );
