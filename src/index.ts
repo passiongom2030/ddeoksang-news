@@ -1,12 +1,12 @@
 import "dotenv/config";
 import { collectNews } from "./collector.js";
-import { analyze, type Analysis } from "./analyzer.js";
+import { analyze, isRateLimitError, type Analysis } from "./analyzer.js";
 import { formatAnalyzedItem } from "./format.js";
 import { postToSlack } from "./slack.js";
 import { loadSeen, isNew, markSeen, saveSeen } from "./state.js";
 import { startScheduler } from "./scheduler.js";
 
-const MAX_ITEMS_PER_RUN = Number(process.env.MAX_ITEMS_PER_RUN ?? 8);
+const MAX_ITEMS_PER_RUN = Number(process.env.MAX_ITEMS_PER_RUN ?? 5);
 const DRY_RUN = !!process.env.DRY_RUN; // 채널에 안 쏘고 콘솔 미리보기 (상태도 저장 안 함)
 
 function checkEnv(): void {
@@ -32,12 +32,20 @@ export async function runBot(): Promise<void> {
   }
   console.log(`🆕 신규 ${fresh.length}건 처리 (전체 ${articles.length}건 중)\n`);
 
+  let rateLimited = false; // 429 도달 시 이후 항목은 분석 생략(헤드라인만)
+
   for (const a of fresh) {
     let analysis: Analysis | null = null;
-    try {
-      analysis = await analyze(a);
-    } catch (err) {
-      console.warn(`⚠️  분석 실패 [${a.source}] ${a.title.slice(0, 30)}… → 헤드라인만 게시: ${(err as Error).message}`);
+    if (!rateLimited) {
+      try {
+        analysis = await analyze(a);
+      } catch (err) {
+        console.warn(`⚠️  분석 실패 [${a.source}] ${a.title.slice(0, 30)}… → 헤드라인만: ${(err as Error).message}`);
+        if (isRateLimitError(err)) {
+          rateLimited = true;
+          console.warn("⚠️  Gemini 한도 도달 — 이번 실행 나머지는 헤드라인만 게시(호출 중단)");
+        }
+      }
     }
 
     const message = formatAnalyzedItem(a, analysis);
@@ -50,8 +58,8 @@ export async function runBot(): Promise<void> {
     await postToSlack(message);
     markSeen(seen, a.id);
 
-    // Slack rate limit 여유
-    await new Promise((r) => setTimeout(r, 1200));
+    // Slack + Gemini(분당 한도) 여유 — 항목 간 간격
+    await new Promise((r) => setTimeout(r, 3000));
   }
 
   if (DRY_RUN) {

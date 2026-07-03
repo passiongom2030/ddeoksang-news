@@ -62,7 +62,7 @@ function buildPrompt(article: NewsArticle): string {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // 503(과부하)/429(레이트리밋) 등 일시 오류는 백오프 후 재시도
-async function callGemini(key: string, body: unknown, maxRetries = 3): Promise<any> {
+async function callGemini(key: string, body: unknown, maxRetries = 2): Promise<any> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
   let lastErr: unknown;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -77,12 +77,18 @@ async function callGemini(key: string, body: unknown, maxRetries = 3): Promise<a
       const status = axios.isAxiosError(err) ? err.response?.status : undefined;
       const retryable = status === 503 || status === 429 || status === 500;
       if (!retryable || attempt === maxRetries) throw err;
-      const wait = 1500 * (attempt + 1); // 1.5s, 3s, 4.5s
+      // 429는 분당 한도라 길게(15s, 30s), 503/500은 짧게(1.5s, 3s)
+      const base = status === 429 ? 15000 : 1500;
+      const wait = base * (attempt + 1);
       console.log(`   ↻ Gemini ${status} — ${wait}ms 후 재시도 (${attempt + 1}/${maxRetries})`);
       await sleep(wait);
     }
   }
   throw lastErr;
+}
+
+export function isRateLimitError(err: unknown): boolean {
+  return axios.isAxiosError(err) && err.response?.status === 429;
 }
 
 export async function analyze(article: NewsArticle): Promise<Analysis> {
