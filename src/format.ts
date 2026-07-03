@@ -33,13 +33,14 @@ function sentimentLabel(sentiment: Analysis["sentiment"]): string {
  * 분석 실패 시(analysis=null) 헤드라인+출처만 폴백 게시.
  */
 export function formatAnalyzedItem(a: NewsArticle, analysis: Analysis | null): string {
-  const title = esc(a.title);
   const sourceLink = a.url ? `<${a.url}|${a.source}>` : a.source;
 
   if (!analysis) {
-    return [`📰 *${title}*`, `• sources: ${sourceLink}`].join("\n");
+    return [`📰 *${esc(a.title)}*`, `• sources: ${sourceLink}`].join("\n");
   }
 
+  // 한국어 제목 우선 (영어 기사도 한글화), 없으면 원제목
+  const title = esc(analysis.headline_ko || a.title);
   const lines: string[] = [`${importanceIcon(analysis.importance)} *${title}*`];
   if (analysis.summary) lines.push(analysis.summary);
   lines.push("");

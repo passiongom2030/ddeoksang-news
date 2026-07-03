@@ -8,6 +8,7 @@ export interface RelatedTicker {
 }
 
 export interface Analysis {
+  headline_ko: string;
   summary: string;
   importance: "HIGH" | "NORMAL" | "LOW";
   sentiment: "bullish" | "neutral" | "bearish";
@@ -22,6 +23,7 @@ const MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash-lite";
 const RESPONSE_SCHEMA = {
   type: "OBJECT",
   properties: {
+    headline_ko: { type: "STRING", description: "기사 제목을 자연스러운 한국어 제목으로. 영어 기사는 번역, 한국어 기사는 그대로/다듬어서." },
     summary: { type: "STRING", description: "핵심을 한국어 2줄 이내로 요약. 영어 기사는 번역." },
     importance: { type: "STRING", enum: ["HIGH", "NORMAL", "LOW"] },
     sentiment: { type: "STRING", enum: ["bullish", "neutral", "bearish"] },
@@ -40,8 +42,8 @@ const RESPONSE_SCHEMA = {
     },
     tags: { type: "ARRAY", items: { type: "STRING" } },
   },
-  required: ["summary", "importance", "sentiment", "category", "related", "tags"],
-  propertyOrdering: ["summary", "importance", "sentiment", "category", "related", "tags"],
+  required: ["headline_ko", "summary", "importance", "sentiment", "category", "related", "tags"],
+  propertyOrdering: ["headline_ko", "summary", "importance", "sentiment", "category", "related", "tags"],
 };
 
 function buildPrompt(article: NewsArticle): string {
@@ -114,6 +116,7 @@ export async function analyze(article: NewsArticle): Promise<Analysis> {
 
   const input = JSON.parse(text) as Partial<Analysis>;
   return {
+    headline_ko: input.headline_ko ?? "",
     summary: input.summary ?? "",
     importance: input.importance ?? "NORMAL",
     sentiment: input.sentiment ?? "neutral",
