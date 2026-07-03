@@ -1,4 +1,10 @@
-node_modules/
+# 비밀·환경변수 (예시 파일만 예외로 추적)
 .env
+.env.*
+!.env.example
+
+# 의존성·빌드·로그
+node_modules/
+dist/
 *.log
 .DS_Store
