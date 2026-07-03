@@ -26,14 +26,16 @@ function norm(s: string): string {
  * 우선 related 티커(코드)로 매칭, 없으면 제목/요약 텍스트에서 종목명 검색.
  */
 export function matchWatchlist(article: NewsArticle, analysis: Analysis): string[] {
-  const relatedCodes = new Set(analysis.related.map((r) => norm(r.symbol)));
+  const relatedSyms = new Set(analysis.related.map((r) => norm(r.symbol)));
   const text = `${analysis.headline_ko} ${article.title} ${analysis.summary}`;
 
   const hits: string[] = [];
   for (const item of WATCHLIST) {
-    const byCode = item.codes.some((c) => relatedCodes.has(norm(c)));
+    const byCode = item.codes.some((c) => relatedSyms.has(norm(c)));
+    const byRelatedName =
+      relatedSyms.has(norm(item.label)) || item.names.some((n) => relatedSyms.has(norm(n)));
     const byName = item.names.some((n) => text.includes(n));
-    if (byCode || byName) hits.push(item.label);
+    if (byCode || byRelatedName || byName) hits.push(item.label);
   }
   return hits;
 }

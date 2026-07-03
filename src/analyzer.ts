@@ -35,7 +35,10 @@ const ITEM_SCHEMA = {
       items: {
         type: "OBJECT",
         properties: {
-          symbol: { type: "STRING" },
+          symbol: {
+            type: "STRING",
+            description: "사람이 읽는 종목명 — 한국=한글명(예 SK텔레콤), 미국/해외=티커(예 NVDA)",
+          },
           market: { type: "STRING", enum: ["STOCK", "ETF", "CRYPTO", "INDEX"] },
           confidence: { type: "INTEGER", description: "관련도 0~100 정수" },
         },
@@ -118,7 +121,7 @@ export async function analyzeBatch(articles: NewsArticle[]): Promise<(Analysis |
 - 각 항목의 idx는 입력 번호와 동일하게(순서 유지).
 - headline_ko, summary는 반드시 한국어. 영어 기사는 번역.
 - importance: 지수/대형주/정책 등 시장 파급력이 크면 HIGH.
-- related: 명확히 관련된 종목/지수만, confidence 0~100 정수. 애매하면 빈 배열.
+- related: 명확히 관련된 종목/지수만. symbol은 사람이 읽는 이름 — 한국 종목은 한글명(예 "SK텔레콤"), 미국/해외는 티커(예 "NVDA"). confidence 0~100 정수(60 미만은 표시 제외). 애매하면 빈 배열.
 - tags: 짧은 한국어 키워드 2-4개.
 - 특정 종목 매수/매도 권유 금지.
 

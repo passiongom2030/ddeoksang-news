@@ -21,11 +21,26 @@ function importanceIcon(importance: Analysis["importance"]): string {
 function sentimentLabel(sentiment: Analysis["sentiment"]): string {
   switch (sentiment) {
     case "bullish":
-      return "bullish 📈";
+      return "📈 강세(Bullish)";
     case "bearish":
-      return "bearish 📉";
+      return "📉 약세(Bearish)";
     default:
-      return "neutral";
+      return "➖ 중립(Neutral)";
+  }
+}
+
+function categoryLabel(category: Analysis["category"], region: NewsArticle["region"]): string {
+  switch (category) {
+    case "stock":
+      return region === "global" ? "해외주식(Stock)" : "국내주식(Stock)";
+    case "crypto":
+      return "코인(Crypto)";
+    case "macro":
+      return "매크로(Macro)";
+    case "fx":
+      return "환율(FX)";
+    case "commodity":
+      return "원자재(Commodity)";
   }
 }
 
@@ -37,35 +52,28 @@ export function formatAnalyzedItem(a: NewsArticle, analysis: Analysis | null): s
   const sourceLink = a.url ? `<${a.url}|${a.source}>` : a.source;
 
   if (!analysis) {
-    return [`📰 *${esc(a.title)}*`, `• sources: ${sourceLink}`].join("\n");
+    return [`📰 *${esc(a.title)}*`, "", `• 출처   ${sourceLink}`].join("\n");
   }
 
-  // 한국어 제목 우선 (영어 기사도 한글화), 없으면 원제목
   const title = esc(analysis.headline_ko || a.title);
-
-  // 관심종목(워치리스트) 관련이면 ⭐ 강조
   const watched = matchWatchlist(a, analysis);
   const star = watched.length ? "⭐ " : "";
 
   const lines: string[] = [`${star}${importanceIcon(analysis.importance)} *${title}*`];
   if (analysis.summary) lines.push(analysis.summary);
   lines.push("");
-  if (watched.length) {
-    lines.push(`• ⭐ 관심종목: ${watched.map(esc).join(", ")}`);
+  lines.push(`• 판단   ${sentimentLabel(analysis.sentiment)}`);
+
+  const related = analysis.related
+    .filter((r) => r.confidence >= 60)
+    .map((r) => esc(r.symbol));
+  if (related.length) {
+    lines.push(`• 관련   ${related.join(" · ")}`);
   }
-  lines.push(
-    `• importance: ${analysis.importance} / sentiment: ${sentimentLabel(analysis.sentiment)} / category: ${analysis.category}`
-  );
-  if (analysis.related.length) {
-    const rel = analysis.related
-      .map((r) => `${esc(r.symbol)} ${r.market} ${Math.round(r.confidence)}`)
-      .join(", ");
-    lines.push(`• related: ${rel}`);
-  }
-  if (analysis.tags.length) {
-    lines.push(`• tags: ${analysis.tags.map(esc).join(", ")}`);
-  }
-  lines.push(`• sources: ${sourceLink}`);
+
+  const classification = [categoryLabel(analysis.category, a.region), ...analysis.tags.map(esc)].join(" · ");
+  lines.push(`• 분류   ${classification}`);
+  lines.push(`• 출처   ${sourceLink}`);
 
   return lines.join("\n");
 }

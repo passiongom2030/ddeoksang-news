@@ -3,6 +3,9 @@
 .env.*
 !.env.example
 
+# 자문봇은 별도 레포 (ddeoksang-advisor) — 실수 커밋 방지
+advisor/
+
 # 의존성·빌드·로그
 node_modules/
 dist/
