@@ -19,11 +19,12 @@ export interface Analysis {
 
 const MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash-lite";
 
-// Gemini 구조화 출력 스키마 (OpenAPI 서브셋 — 타입 대문자)
-const RESPONSE_SCHEMA = {
+// 뉴스 1건 분석 스키마 (배치 배열의 각 원소)
+const ITEM_SCHEMA = {
   type: "OBJECT",
   properties: {
-    headline_ko: { type: "STRING", description: "기사 제목을 자연스러운 한국어 제목으로. 영어 기사는 번역, 한국어 기사는 그대로/다듬어서." },
+    idx: { type: "INTEGER", description: "입력 뉴스의 번호(순서 유지용)" },
+    headline_ko: { type: "STRING", description: "기사 제목을 자연스러운 한국어 제목으로. 영어 기사는 번역." },
     summary: { type: "STRING", description: "핵심을 한국어 2줄 이내로 요약. 영어 기사는 번역." },
     importance: { type: "STRING", enum: ["HIGH", "NORMAL", "LOW"] },
     sentiment: { type: "STRING", enum: ["bullish", "neutral", "bearish"] },
@@ -35,31 +36,21 @@ const RESPONSE_SCHEMA = {
         properties: {
           symbol: { type: "STRING" },
           market: { type: "STRING", enum: ["STOCK", "ETF", "CRYPTO", "INDEX"] },
-          confidence: { type: "INTEGER", description: "관련도 0~100 정수 (90=매우 관련, 50=보통)" },
+          confidence: { type: "INTEGER", description: "관련도 0~100 정수" },
         },
         required: ["symbol", "market", "confidence"],
       },
     },
     tags: { type: "ARRAY", items: { type: "STRING" } },
   },
-  required: ["headline_ko", "summary", "importance", "sentiment", "category", "related", "tags"],
-  propertyOrdering: ["headline_ko", "summary", "importance", "sentiment", "category", "related", "tags"],
+  required: ["idx", "headline_ko", "summary", "importance", "sentiment", "category", "related", "tags"],
 };
 
-function buildPrompt(article: NewsArticle): string {
-  return `아래 주식/금융 뉴스를 투자자 관점에서 구조화 분석하세요.
-
-제목: ${article.title}
-출처: ${article.source} (${article.lang === "en" ? "영어" : "한국어"})
-내용: ${article.description || "(요약 없음 — 제목 기반으로 판단)"}
-
-규칙:
-- summary는 반드시 한국어. 영어 기사는 번역해서 요약.
-- importance: 지수/대형주/정책 등 시장 파급력이 크면 HIGH.
-- related: 명확히 관련된 종목/지수만. 애매하면 빈 배열. confidence는 반드시 0~100 정수(관련도가 높을수록 큰 값, 예: 90).
-- tags: 짧은 한국어 키워드 2-4개 (예: 반도체, 실적, 금리).
-- 특정 종목 매수/매도를 권유하지 말 것.`;
-}
+const BATCH_SCHEMA = {
+  type: "OBJECT",
+  properties: { items: { type: "ARRAY", items: ITEM_SCHEMA } },
+  required: ["items"],
+};
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -72,15 +63,14 @@ async function callGemini(key: string, body: unknown, maxRetries = 2): Promise<a
       return await axios.post(url, body, {
         params: { key },
         headers: { "Content-Type": "application/json" },
-        timeout: 20000,
+        timeout: 30000,
       });
     } catch (err) {
       lastErr = err;
       const status = axios.isAxiosError(err) ? err.response?.status : undefined;
       const retryable = status === 503 || status === 429 || status === 500;
       if (!retryable || attempt === maxRetries) throw err;
-      // 429는 분당 한도라 길게(15s, 30s), 503/500은 짧게(1.5s, 3s)
-      const base = status === 429 ? 15000 : 1500;
+      const base = status === 429 ? 15000 : 1500; // 429는 분당 한도라 길게
       const wait = base * (attempt + 1);
       console.log(`   ↻ Gemini ${status} — ${wait}ms 후 재시도 (${attempt + 1}/${maxRetries})`);
       await sleep(wait);
@@ -93,35 +83,76 @@ export function isRateLimitError(err: unknown): boolean {
   return axios.isAxiosError(err) && err.response?.status === 429;
 }
 
-export async function analyze(article: NewsArticle): Promise<Analysis> {
+function normalize(it: Partial<Analysis>): Analysis {
+  return {
+    headline_ko: it.headline_ko ?? "",
+    summary: it.summary ?? "",
+    importance: it.importance ?? "NORMAL",
+    sentiment: it.sentiment ?? "neutral",
+    category: it.category ?? "stock",
+    related: Array.isArray(it.related) ? it.related : [],
+    tags: Array.isArray(it.tags) ? it.tags : [],
+  };
+}
+
+/**
+ * 여러 뉴스를 단 1번의 Gemini 호출로 배치 분석한다 (분당 한도 부담 최소화).
+ * 반환 배열은 입력 순서와 정렬됨. 특정 항목이 누락되면 그 자리에 null.
+ */
+export async function analyzeBatch(articles: NewsArticle[]): Promise<(Analysis | null)[]> {
   const key = process.env.GEMINI_API_KEY;
   if (!key) throw new Error("GEMINI_API_KEY가 설정되지 않았습니다.");
+  if (articles.length === 0) return [];
+
+  const list = articles
+    .map(
+      (a, i) =>
+        `[${i}] 제목: ${a.title}\n    출처: ${a.source} (${a.lang === "en" ? "영어" : "한국어"})\n    내용: ${a.description || "(요약 없음 — 제목 기반)"}`
+    )
+    .join("\n\n");
+
+  const prompt = `아래 ${articles.length}개의 주식/금융 뉴스를 각각 투자자 관점에서 분석해 items 배열로 반환하세요.
+
+규칙:
+- 각 항목의 idx는 입력 번호와 동일하게(순서 유지).
+- headline_ko, summary는 반드시 한국어. 영어 기사는 번역.
+- importance: 지수/대형주/정책 등 시장 파급력이 크면 HIGH.
+- related: 명확히 관련된 종목/지수만, confidence 0~100 정수. 애매하면 빈 배열.
+- tags: 짧은 한국어 키워드 2-4개.
+- 특정 종목 매수/매도 권유 금지.
+
+뉴스 목록:
+${list}`;
 
   const res = await callGemini(key, {
-    contents: [{ parts: [{ text: buildPrompt(article) }] }],
+    contents: [{ parts: [{ text: prompt }] }],
     generationConfig: {
       responseMimeType: "application/json",
-      responseSchema: RESPONSE_SCHEMA,
-      maxOutputTokens: 1024,
+      responseSchema: BATCH_SCHEMA,
+      maxOutputTokens: 4096,
       temperature: 0.3,
     },
   });
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const text: string | undefined = res.data?.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!text) {
     const reason = res.data?.candidates?.[0]?.finishReason ?? "unknown";
     throw new Error(`Gemini 응답에 텍스트 없음 (finishReason: ${reason})`);
   }
 
-  const input = JSON.parse(text) as Partial<Analysis>;
-  return {
-    headline_ko: input.headline_ko ?? "",
-    summary: input.summary ?? "",
-    importance: input.importance ?? "NORMAL",
-    sentiment: input.sentiment ?? "neutral",
-    category: input.category ?? "stock",
-    related: Array.isArray(input.related) ? input.related : [],
-    tags: Array.isArray(input.tags) ? input.tags : [],
-  };
+  const parsed = JSON.parse(text) as { items?: Array<Partial<Analysis> & { idx?: number }> };
+  const items = Array.isArray(parsed.items) ? parsed.items : [];
+
+  // idx로 매핑, 없으면 순서로 폴백
+  const byIdx = new Map<number, Partial<Analysis>>();
+  items.forEach((it, i) => {
+    const key = typeof it.idx === "number" ? it.idx : i;
+    byIdx.set(key, it);
+  });
+
+  return articles.map((_, i) => {
+    const it = byIdx.get(i);
+    if (!it || !it.summary) return null;
+    return normalize(it);
+  });
 }

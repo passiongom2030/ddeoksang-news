@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { collectNews } from "./collector.js";
-import { analyze, isRateLimitError, type Analysis } from "./analyzer.js";
+import { analyzeBatch, isRateLimitError } from "./analyzer.js";
 import { formatAnalyzedItem } from "./format.js";
 import { postToSlack } from "./slack.js";
 import { loadSeen, isNew, markSeen, saveSeen } from "./state.js";
@@ -32,20 +32,28 @@ export async function runBot(): Promise<void> {
   }
   console.log(`🆕 신규 ${fresh.length}건 처리 (전체 ${articles.length}건 중)\n`);
 
-  let posted = 0;
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-  for (const a of fresh) {
-    // 분석이 성공한 것만 게시한다. 실패하면 markSeen 하지 않아 다음 실행에서 재시도.
-    let analysis: Analysis;
-    try {
-      analysis = await analyze(a);
-    } catch (err) {
-      if (isRateLimitError(err)) {
-        console.warn("⚠️  Gemini 한도(429) 도달 — 이번 실행 중단, 남은 뉴스는 다음 실행에서 재시도");
-        break; // 나머지는 건드리지 않고 다음 cron에 맡김 (빈/영어 메시지 방지)
-      }
-      console.warn(`⚠️  분석 실패 [${a.source}] ${a.title.slice(0, 30)}… → 이번엔 스킵(다음 재시도): ${(err as Error).message}`);
-      continue; // 게시·markSeen 안 함
+  // 단 1번의 Gemini 호출로 전체 배치 분석 (분당 한도 부담 최소화)
+  let analyses: (Awaited<ReturnType<typeof analyzeBatch>>[number])[];
+  try {
+    analyses = await analyzeBatch(fresh);
+  } catch (err) {
+    if (isRateLimitError(err)) {
+      console.warn("⚠️  Gemini 한도(429) — 이번 실행 스킵, 다음 실행에서 재시도");
+      return; // 아무것도 게시·기록하지 않음
+    }
+    console.warn(`⚠️  배치 분석 실패 — 이번 실행 스킵: ${(err as Error).message}`);
+    return;
+  }
+
+  let posted = 0;
+  for (let i = 0; i < fresh.length; i++) {
+    const a = fresh[i];
+    const analysis = analyses[i];
+    if (!analysis) {
+      // 개별 항목 분석 누락 → 이번엔 게시·기록 안 함 (다음 실행 재시도)
+      continue;
     }
 
     const message = formatAnalyzedItem(a, analysis);
@@ -58,9 +66,7 @@ export async function runBot(): Promise<void> {
     await postToSlack(message);
     markSeen(seen, a.id);
     posted++;
-
-    // Slack + Gemini(분당 한도) 여유 — 항목 간 간격
-    await new Promise((r) => setTimeout(r, 3000));
+    await sleep(1200); // Slack 게시 간격
   }
 
   console.log(`\n게시 ${posted}건`);
