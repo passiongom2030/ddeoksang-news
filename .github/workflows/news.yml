@@ -1,0 +1,40 @@
+name: ddeoksang-news
+
+on:
+  schedule:
+    - cron: "*/30 * * * *" # 30분마다 (UTC 기준 간격 실행, 약간 지연될 수 있음)
+  workflow_dispatch: {} # 수동 실행 버튼
+
+permissions:
+  contents: write # seen.json 커밋 백을 위해
+
+concurrency:
+  group: ddeoksang-news
+  cancel-in-progress: false # 실행끼리 겹치지 않게 순차 처리
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - run: npm ci
+
+      - name: Run 떡상뉘우스 bot
+        run: npm run dev
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: Persist seen.json (중복방지 상태 저장)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/seen.json
+          git diff --staged --quiet || git commit -m "chore: update seen.json [skip ci]"
+          git push

@@ -1,0 +1,25 @@
+{
+  "name": "stock-ai",
+  "version": "1.0.0",
+  "description": "주식 시장 뉴스 AI - Meta Threads 자동 포스팅 봇",
+  "type": "module",
+  "scripts": {
+    "run": "tsx src/index.ts run",
+    "schedule": "tsx src/index.ts schedule",
+    "dev": "tsx src/index.ts run",
+    "test:slack": "tsx src/test-slack.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.80.0",
+    "axios": "^1.7.0",
+    "dotenv": "^16.4.0",
+    "fast-xml-parser": "^5.9.3",
+    "node-cron": "^3.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/node-cron": "^3.0.11",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
