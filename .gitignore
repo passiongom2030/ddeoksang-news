@@ -9,5 +9,6 @@ advisor/
 # 의존성·빌드·로그
 node_modules/
 dist/
+.vercel/
 *.log
 .DS_Store

@@ -1,6 +1,12 @@
 import type { NewsArticle } from "./collector.js";
 import type { Analysis } from "./analyzer.js";
 import { matchWatchlist } from "./watchlist.js";
+import {
+  TREND_GROUP_LABELS,
+  TREND_GROUP_ORDER,
+  type TrendGroup,
+} from "./trend-symbols.js";
+import type { QuoteRow } from "./yahoo.js";
 
 // Slack mrkdwn 이스케이프
 function esc(s: string): string {
@@ -95,5 +101,77 @@ export function formatNewsMessage(articles: NewsArticle[]): string {
     const text = a.url ? `<${a.url}|${esc(a.title)}>` : esc(a.title);
     parts.push(`• ${text}  _${a.source}_`);
   }
+  return parts.join("\n");
+}
+
+// ---- /동향 주가 동향 ----
+
+function trendDateLabel(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}.${m}.${day}`;
+}
+
+/** 심볼 성격에 맞춰 현재가 표시 (국내=정수, 그 외=소수 2자리) */
+export function formatTrendPrice(price: number, symbol: string): string {
+  if (symbol.endsWith(".KS") || symbol.endsWith(".KQ")) {
+    return Math.round(price).toLocaleString("en-US");
+  }
+  if (symbol === "BTC-USD" || symbol.startsWith("BTC")) {
+    return Math.round(price).toLocaleString("en-US");
+  }
+  return price.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function formatChangePct(changePct: number): string {
+  const sign = changePct > 0 ? "+" : "";
+  return `${sign}${changePct.toFixed(1)}%`;
+}
+
+function formatVolume(volume: number | null | undefined): string {
+  if (volume == null) return "-";
+  return volume.toLocaleString("en-US");
+}
+
+function formatQuoteLine(row: QuoteRow): string {
+  if (!row.ok) {
+    return `— ${esc(row.label)} 조회 실패`;
+  }
+  const icon = row.changePct >= 0 ? "🟢" : "🔴";
+  const price = formatTrendPrice(row.price, row.symbol);
+  return `${icon} ${esc(row.label)} ${price} (${formatChangePct(row.changePct)}) · 거래량 ${formatVolume(row.volume)}`;
+}
+
+/**
+ * 최근 일주일(5거래일) 글로벌 주가 동향 리치 메시지.
+ */
+export function formatTrendMessage(
+  rows: QuoteRow[],
+  title = "📊 *최근 일주일 글로벌 주가 동향*"
+): string {
+  const byGroup = new Map<TrendGroup, QuoteRow[]>();
+  for (const row of rows) {
+    const list = byGroup.get(row.group) ?? [];
+    list.push(row);
+    byGroup.set(row.group, list);
+  }
+
+  const parts: string[] = [`${title} | ${trendDateLabel()}`];
+
+  for (const group of TREND_GROUP_ORDER) {
+    const list = byGroup.get(group);
+    if (!list?.length) continue;
+    parts.push("");
+    parts.push(`〈${TREND_GROUP_LABELS[group]}〉`);
+    for (const row of list) {
+      parts.push(formatQuoteLine(row));
+    }
+  }
+
   return parts.join("\n");
 }

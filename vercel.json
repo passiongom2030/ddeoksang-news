@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "functions": {
+    "api/slack-trend.ts": {
+      "maxDuration": 15,
+      "memory": 256
+    },
+    "api/ask.ts": {
+      "maxDuration": 15,
+      "memory": 256
+    }
+  }
+}

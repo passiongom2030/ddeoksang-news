@@ -7,7 +7,11 @@
     "run": "tsx src/index.ts run",
     "schedule": "tsx src/index.ts schedule",
     "dev": "tsx src/index.ts run",
-    "test:slack": "tsx src/test-slack.ts"
+    "daily-alert": "tsx src/daily-alert.ts",
+    "test:slack": "tsx src/test-slack.ts",
+    "test:trend": "tsx src/test-trend.ts",
+    "test:trend:verify": "tsx src/test-trend.ts --verify",
+    "test:trend:mock": "tsx src/test-trend.ts --mock-ack"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.80.0",
