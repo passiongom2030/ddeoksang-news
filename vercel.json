@@ -8,6 +8,10 @@
     "api/ask.ts": {
       "maxDuration": 15,
       "memory": 256
+    },
+    "api/events.ts": {
+      "maxDuration": 15,
+      "memory": 256
     }
   }
 }

@@ -1,7 +1,12 @@
 import axios from "axios";
 import { buildStockDataSummary } from "./stock-lookup.js";
+import { fetchThreadReplies, type SlackThreadMessage } from "./slack-api.js";
 
 const MODEL = process.env.GEMINI_MODEL ?? "gemini-flash-latest";
+
+function stripMentions(text: string): string {
+  return text.replace(/<@[A-Z0-9]+>/g, "").trim();
+}
 
 async function callGemini(key: string, body: unknown, maxRetries = 1): Promise<any> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
@@ -24,24 +29,39 @@ async function callGemini(key: string, body: unknown, maxRetries = 1): Promise<a
   throw lastErr;
 }
 
+function buildTranscript(messages: SlackThreadMessage[], botUserId: string): string {
+  return messages
+    .map((m) => {
+      const speaker = m.bot_id || m.user === botUserId ? "봇" : "사용자";
+      return `${speaker}: ${stripMentions(m.text)}`;
+    })
+    .join("\n");
+}
+
 /**
- * 자유 질문에 답한다. 워치리스트에 없는 국내 종목도 네이버 검색으로 조회 가능.
- * 매수/매도 판단은 절대 하지 않는다 — 데이터 설명·비교까지만 (ai-investor-coach와 역할 분리).
+ * 스레드 전체 맥락(conversations.replies로 매번 새로 조회 — 별도 DB 없이 Slack이 상태 저장소 역할)을
+ * 바탕으로 마지막 사용자 질문에 답한다.
  */
-export async function askAboutStocks(question: string): Promise<string> {
+export async function answerInThread(channel: string, threadTs: string, botUserId: string): Promise<string> {
   const key = process.env.GEMINI_API_KEY;
   if (!key) throw new Error("GEMINI_API_KEY가 설정되지 않았습니다.");
 
-  const dataSummary = await buildStockDataSummary(question);
+  const messages = await fetchThreadReplies(channel, threadTs);
+  const transcript = buildTranscript(messages, botUserId);
 
-  const prompt = `사용자 질문: "${question}"
+  const fullText = messages.map((m) => stripMentions(m.text)).join(" ");
+  const dataSummary = await buildStockDataSummary(fullText);
 
-아래는 관련 종목의 실시간 데이터입니다:
+  const prompt = `아래는 Slack 스레드 대화 기록입니다:
+${transcript}
+
+관련 종목 실시간 데이터:
 ${dataSummary}
 
-위 데이터를 바탕으로 질문에 답변하세요.
+위 대화의 가장 마지막 "사용자" 메시지에 대해 답변하세요.
 
 규칙 (반드시 지킬 것):
+- 이전 대화 맥락을 참고해서 자연스럽게 이어서 답할 것 (예: "그것보다는?" 같은 축약된 질문도 앞 맥락으로 해석).
 - 데이터를 설명하거나 종목 간 비교만 할 것.
 - 매수/매도 판단, 투자 의견, "사세요/파세요/좋아 보입니다" 같은 표현은 절대 하지 말 것.
 - 데이터에 없는 항목(예: 특정 지표)을 물으면 없다고 정직하게 답할 것.

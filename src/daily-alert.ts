@@ -10,7 +10,7 @@ import { postToSlack } from "./slack.js";
 async function main(): Promise<void> {
   const rows = await fetchAllQuotes();
   const message = formatTrendMessage(rows, "📊 *오늘 관심종목 요약*");
-  await postToSlack(message);
+  await postToSlack(message, { username: "stock-news-bot", icon_emoji: ":bar_chart:" });
   console.log("✅ 일일 관심종목 알림 게시 완료");
 }
 
