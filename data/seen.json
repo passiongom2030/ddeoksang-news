@@ -1,9 +1,5 @@
 {
   "ids": [
-    "https://kr.investing.com/news/stock-market-news/article-2025683",
-    "https://kr.investing.com/news/stock-market-news/article-2025681",
-    "https://kr.investing.com/news/stock-market-news/article-93CH-2025679",
-    "https://kr.investing.com/news/stock-market-news/article-2025676",
     "https://kr.investing.com/news/stock-market-news/article-2025671",
     "https://kr.investing.com/news/stock-market-news/article-93CH-2025798",
     "https://kr.investing.com/news/stock-market-news/article-2025796",
@@ -499,6 +495,10 @@
     "https://kr.investing.com/news/stock-market-news/article-93CH-2042454",
     "https://kr.investing.com/news/stock-market-news/article-93CH-2042450",
     "https://kr.investing.com/news/stock-market-news/article-2042433",
-    "https://kr.investing.com/news/stock-market-news/article-432SI-2042410"
+    "https://kr.investing.com/news/stock-market-news/article-432SI-2042410",
+    "https://www.cnbc.com/2026/08/03/big-techs-anthropic-and-openai-stakes-distort-corporate-earnings.html",
+    "https://www.cnbc.com/2026/08/03/palantir-pltr-earnings-q2-2026.html",
+    "https://www.cnbc.com/2026/08/03/amazon-amzn-stock-market-cap-earnings.html",
+    "https://www.cnbc.com/2026/08/03/spacexs-post-ipo-plunge-sets-tense-backdrop-for-first-earnings-report.html"
   ]
 }
