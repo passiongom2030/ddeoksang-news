@@ -7,6 +7,7 @@ export interface QuoteResult {
   group: TrendSymbol["group"];
   ok: true;
   price: number;
+  /** 최근 5거래일 누적 변화율 (/동향·daily-alert 용도) — "오늘 등락률"이 아님 */
   changePct: number;
   prevClose: number;
   volume: number | null;
@@ -36,7 +37,7 @@ const YAHOO_UA =
 interface YahooChartResponse {
   chart?: {
     result?: Array<{
-      meta?: { regularMarketPrice?: number };
+      meta?: { regularMarketPrice?: number; previousClose?: number; chartPreviousClose?: number };
       indicators?: {
         quote?: Array<{ close?: Array<number | null>; volume?: Array<number | null> }>;
       };
@@ -138,4 +139,40 @@ export async function fetchAllQuotes(
 /** 테스트/디버그용 캐시 초기화 */
 export function clearQuoteCache(): void {
   cache.clear();
+}
+
+export interface LivePrice {
+  price: number;
+  previousClose: number | null;
+  changePct: number | null;
+}
+
+/**
+ * 실시간에 가까운 현재가 + 전일 종가 대비 등락률을 가져온다.
+ * fetchQuote()는 5일 range로 호출해서 previousClose가 응답에 아예 안 실려오는 문제가 있어
+ * (5일 전 종가인 chartPreviousClose로 잘못 계산되는 버그 발생) — 1일 range로 별도 호출한다.
+ */
+export async function fetchLivePrice(symbol: string): Promise<LivePrice | null> {
+  try {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`;
+    const { data } = await axios.get<YahooChartResponse>(url, {
+      params: { range: "1d", interval: "1m" },
+      headers: { "User-Agent": YAHOO_UA, Accept: "application/json" },
+      timeout: 8000,
+    });
+
+    const meta = data.chart?.result?.[0]?.meta;
+    if (!meta || typeof meta.regularMarketPrice !== "number") return null;
+
+    const previousClose = meta.previousClose ?? meta.chartPreviousClose ?? null;
+    const changePct =
+      previousClose && previousClose > 0
+        ? ((meta.regularMarketPrice - previousClose) / previousClose) * 100
+        : null;
+
+    return { price: meta.regularMarketPrice, previousClose, changePct };
+  } catch (err) {
+    console.warn("Yahoo 실시간 가격 조회 실패:", symbol, (err as Error).message);
+    return null;
+  }
 }
