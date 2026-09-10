@@ -8,6 +8,7 @@
     "schedule": "tsx src/index.ts schedule",
     "dev": "tsx src/index.ts run",
     "daily-alert": "tsx src/daily-alert.ts",
+    "intraday-alert": "tsx src/intraday-alert.ts",
     "test:slack": "tsx src/test-slack.ts",
     "test:trend": "tsx src/test-trend.ts",
     "test:trend:verify": "tsx src/test-trend.ts --verify",

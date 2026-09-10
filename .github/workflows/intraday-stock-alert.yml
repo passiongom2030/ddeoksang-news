@@ -1,0 +1,43 @@
+name: intraday-stock-alert
+
+on:
+  schedule:
+    # 국내장 09:00~15:30 KST = 00:00~06:30 UTC (평일)
+    - cron: "*/15 0-6 * * 1-5"
+    # 미국장(프리마켓~애프터마켓 포함) 22:00~05:00 KST 다음날 = 13:00~20:00 UTC (평일)
+    - cron: "*/15 13-20 * * 1-5"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write # intraday-alerted.json 커밋 백을 위해
+
+concurrency:
+  group: intraday-stock-alert
+  cancel-in-progress: false
+
+jobs:
+  alert:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - run: npm ci
+
+      - name: Run intraday alert check
+        run: npm run intraday-alert
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          INTRADAY_ALERT_THRESHOLD_PCT: "5"
+
+      - name: Persist intraday-alerted.json (당일 중복알림 방지 상태 저장)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/intraday-alerted.json
+          git diff --staged --quiet || git commit -m "chore: update intraday-alerted.json [skip ci]"
+          git push
