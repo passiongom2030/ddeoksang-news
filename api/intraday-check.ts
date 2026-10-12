@@ -1,5 +1,5 @@
 import type { IncomingMessage } from "node:http";
-import { fetchLivePrice } from "../src/yahoo.js";
+import { fetchIntradayCrossing } from "../src/yahoo.js";
 import { formatTrendPrice } from "../src/format.js";
 import { postToSlack } from "../src/slack.js";
 import { TREND_SYMBOLS, type TrendSymbol } from "../src/trend-symbols.js";
@@ -13,58 +13,69 @@ interface CronResponse {
   json(body: unknown): void;
 }
 
-const THRESHOLD_PCT = Number(process.env.INTRADAY_ALERT_THRESHOLD_PCT ?? 5);
+// 전일 종가 대비 이 기준선(±%)을 "새로 넘을 때"만 알린다 — 높은 기준선일수록 추가 알림
+const LEVELS = (process.env.INTRADAY_ALERT_LEVELS ?? "5,7,10,15,20")
+  .split(",")
+  .map((v) => Number(v.trim()))
+  .filter((v) => Number.isFinite(v) && v > 0);
+// 외부 크론 호출 간격(분)보다 약간 넓게 — 호출이 조금 늦어도 놓치지 않기 위함
+const WINDOW_MIN = Number(process.env.INTRADAY_WINDOW_MIN ?? 17);
 
-const WATCH_SYMBOLS: TrendSymbol[] = TREND_SYMBOLS.filter(
-  (s) => s.group !== "us_index"
-);
+const WATCH_SYMBOLS: TrendSymbol[] = TREND_SYMBOLS.filter((s) => s.group !== "us_index");
 
-function formatAlertLine(item: TrendSymbol, price: number, changePct: number): string {
-  const icon = changePct >= 0 ? "🟢" : "🔴";
-  const sign = changePct > 0 ? "+" : "";
-  const priceLabel = formatTrendPrice(price, item.symbol);
-  return `${icon} *${item.label}* ${priceLabel} (${sign}${changePct.toFixed(1)}%)`;
+function first(v: string | string[] | undefined): string | undefined {
+  return Array.isArray(v) ? v[0] : v;
 }
 
 /**
- * 외부 크론 핑 서비스(cron-job.org 등)가 호출하는 급변동 체크 엔드포인트.
- * GitHub Actions의 schedule 트리거가 몇 시간씩 지연되는 문제를 우회하려고
- * intraday-alert.ts와 같은 로직을 Vercel 서버리스로 옮긴 버전.
- *
- * 상태 저장(당일 중복 알림 방지) 없이 매 호출마다 현재 상태만 판단 — 대신 외부
- * 크론의 호출 간격(예: 15~30분) 자체가 자연스러운 알림 빈도 제한 역할을 한다.
- * 즉, 급변동이 지속되는 동안은 호출될 때마다 반복 알림이 갈 수 있음(의도된 단순화).
+ * 외부 스케줄러(크롤러 PC 작업 스케줄러·cron-job.org 등)가 15분마다 호출하는 급변동 체크.
+ * 1분봉으로 "방금 기준선을 넘었는지"를 판단하므로 상태 저장 없이도 같은 급변동이
+ * 호출마다 반복 알림되지 않는다(이미 오래 전에 넘은 종목은 조용히 넘어감).
+ * ?dry=1 이면 Slack에 보내지 않고 결과만 반환.
  */
 export default async function handler(req: CronRequest, res: CronResponse) {
   const secret = process.env.INTRADAY_CRON_SECRET;
-  const provided = req.query?.key;
-  const providedKey = Array.isArray(provided) ? provided[0] : provided;
+  const cronSecret = process.env.CRON_SECRET;
+  const authed =
+    (secret && first(req.query?.key) === secret) ||
+    (cronSecret && req.headers.authorization === `Bearer ${cronSecret}`);
+  if (!authed) return res.status(401).json({ error: "unauthorized" });
+  const dry = first(req.query?.dry) === "1";
 
-  if (!secret || providedKey !== secret) {
-    return res.status(401).json({ error: "unauthorized" });
+  const results = await Promise.all(
+    WATCH_SYMBOLS.map(async (item) => ({
+      item,
+      r: await fetchIntradayCrossing(item.symbol, LEVELS, WINDOW_MIN),
+    }))
+  );
+
+  const lines: string[] = [];
+  for (const { item, r } of results) {
+    if (!r || r.level == null) continue;
+    const icon = r.changePct >= 0 ? "🟢" : "🔴";
+    const sign = r.changePct > 0 ? "+" : "";
+    const dir = r.changePct >= 0 ? "상승" : "하락";
+    const age = Math.max(1, Math.round(r.ageMin ?? 0));
+    lines.push(
+      `${icon} *${item.label}* ${formatTrendPrice(r.price, item.symbol)} (전일비 ${sign}${r.changePct.toFixed(1)}%) — ${r.level}% ${dir} 돌파, ${age}분 전`
+    );
   }
 
-  const alerts: string[] = [];
-  const checked: Array<{ symbol: string; changePct: number | null }> = [];
-
-  for (const item of WATCH_SYMBOLS) {
-    const live = await fetchLivePrice(item.symbol);
-    checked.push({ symbol: item.symbol, changePct: live?.changePct ?? null });
-    if (!live || live.changePct == null) continue;
-
-    if (Math.abs(live.changePct) >= THRESHOLD_PCT) {
-      alerts.push(formatAlertLine(item, live.price, live.changePct));
-    }
+  if (lines.length > 0 && !dry) {
+    await postToSlack(["🚨 *급변동 알림*", "", ...lines].join("\n"), {
+      username: "stock-alert-bot",
+      icon_emoji: ":rotating_light:",
+    });
   }
 
-  if (alerts.length > 0) {
-    const message = [
-      `🚨 *급변동 알림* (전일 종가 대비 ±${THRESHOLD_PCT}% 이상)`,
-      "",
-      ...alerts,
-    ].join("\n");
-    await postToSlack(message, { username: "stock-alert-bot", icon_emoji: ":rotating_light:" });
-  }
-
-  return res.status(200).json({ alerted: alerts.length, checked });
+  return res.status(200).json({
+    alerted: lines.length,
+    dry,
+    lines,
+    checked: results.map(({ item, r }) => ({
+      symbol: item.symbol,
+      changePct: r ? Number(r.changePct.toFixed(2)) : null,
+      level: r?.level ?? null,
+    })),
+  });
 }

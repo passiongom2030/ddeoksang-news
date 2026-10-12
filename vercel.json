@@ -16,6 +16,14 @@
     "api/intraday-check.ts": {
       "maxDuration": 30,
       "memory": 256
+    },
+    "api/daily-digest.ts": {
+      "maxDuration": 30,
+      "memory": 256
     }
-  }
+  },
+  "crons": [
+    { "path": "/api/daily-digest?session=kr", "schedule": "10 7 * * 1-5" },
+    { "path": "/api/daily-digest?session=us", "schedule": "30 21 * * 1-5" }
+  ]
 }

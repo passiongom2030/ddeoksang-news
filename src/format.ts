@@ -142,9 +142,13 @@ function formatQuoteLine(row: QuoteRow): string {
   if (!row.ok) {
     return `— ${esc(row.label)} 조회 실패`;
   }
-  const icon = row.changePct >= 0 ? "🟢" : "🔴";
+  const icon = (row.dayChangePct ?? row.changePct) >= 0 ? "🟢" : "🔴";
   const price = formatTrendPrice(row.price, row.symbol);
-  return `${icon} ${esc(row.label)} ${price} (${formatChangePct(row.changePct)}) · 거래량 ${formatVolume(row.volume)}`;
+  const change =
+    row.dayChangePct != null
+      ? `1일 ${formatChangePct(row.dayChangePct)} · 5일 ${formatChangePct(row.changePct)}`
+      : `5일 ${formatChangePct(row.changePct)}`;
+  return `${icon} ${esc(row.label)} ${price} (${change}) · 거래량 ${formatVolume(row.volume)}`;
 }
 
 /**

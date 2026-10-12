@@ -9,6 +9,8 @@ export interface QuoteResult {
   price: number;
   /** 최근 5거래일 누적 변화율 (/동향·daily-alert 용도) — "오늘 등락률"이 아님 */
   changePct: number;
+  /** 가장 최근 거래일 종가 대비 전 거래일 종가 변화율 (일봉 마지막 2개 기준) */
+  dayChangePct: number | null;
   prevClose: number;
   volume: number | null;
 }
@@ -37,6 +39,7 @@ const YAHOO_UA =
 interface YahooChartResponse {
   chart?: {
     result?: Array<{
+      timestamp?: number[];
       meta?: { regularMarketPrice?: number; previousClose?: number; chartPreviousClose?: number };
       indicators?: {
         quote?: Array<{ close?: Array<number | null>; volume?: Array<number | null> }>;
@@ -101,6 +104,14 @@ export async function fetchQuote(item: TrendSymbol): Promise<QuoteRow> {
     const changePct = ((pair.last - pair.first) / pair.first) * 100;
     const volume = lastValid(result.indicators?.quote?.[0]?.volume ?? []);
 
+    const validCloses = closes.filter(
+      (c): c is number => typeof c === "number" && Number.isFinite(c)
+    );
+    const dayChangePct =
+      validCloses.length >= 2
+        ? ((price - validCloses[validCloses.length - 2]!) / validCloses[validCloses.length - 2]!) * 100
+        : null;
+
     const row: QuoteResult = {
       symbol: item.symbol,
       label: item.label,
@@ -108,6 +119,7 @@ export async function fetchQuote(item: TrendSymbol): Promise<QuoteRow> {
       ok: true,
       price,
       changePct,
+      dayChangePct,
       prevClose: pair.first,
       volume,
     };
@@ -173,6 +185,78 @@ export async function fetchLivePrice(symbol: string): Promise<LivePrice | null> 
     return { price: meta.regularMarketPrice, previousClose, changePct };
   } catch (err) {
     console.warn("Yahoo 실시간 가격 조회 실패:", symbol, (err as Error).message);
+    return null;
+  }
+}
+
+export interface IntradayCrossing {
+  price: number;
+  /** 전일 종가 대비 현재 등락률 */
+  changePct: number;
+  /** 최근 windowMin분 안에 새로 넘은 가장 높은 기준선(절댓값 %) — 없으면 null */
+  level: number | null;
+  /** 해당 기준선을 넘은 지 몇 분 됐는지 */
+  ageMin: number | null;
+}
+
+/**
+ * 1분봉으로 "방금 기준선(±level%)을 새로 넘었는지" 판단한다.
+ * 상태 저장 없이 중복 알림을 피하려는 목적 — 이미 오래 전에 넘은 상태는 level=null.
+ * 마지막 봉이 staleMin분보다 오래됐으면(장 마감 중) level=null.
+ */
+export async function fetchIntradayCrossing(
+  symbol: string,
+  levels: number[],
+  windowMin: number,
+  staleMin = 30
+): Promise<IntradayCrossing | null> {
+  try {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`;
+    const { data } = await axios.get<YahooChartResponse>(url, {
+      params: { range: "1d", interval: "1m" },
+      headers: { "User-Agent": YAHOO_UA, Accept: "application/json" },
+      timeout: 8000,
+    });
+
+    const result = data.chart?.result?.[0];
+    const meta = result?.meta;
+    const ts = result?.timestamp ?? [];
+    const closes = result?.indicators?.quote?.[0]?.close ?? [];
+    const prev = meta?.previousClose ?? meta?.chartPreviousClose;
+    if (!result || !prev || prev <= 0) return null;
+
+    const pts: Array<{ t: number; pct: number; c: number }> = [];
+    for (let i = 0; i < ts.length; i++) {
+      const c = closes[i];
+      if (typeof c === "number" && Number.isFinite(c)) {
+        pts.push({ t: ts[i]!, pct: ((c - prev) / prev) * 100, c });
+      }
+    }
+    if (pts.length === 0) return null;
+
+    const last = pts[pts.length - 1]!;
+    const nowSec = Date.now() / 1000;
+    const base: IntradayCrossing = { price: last.c, changePct: last.pct, level: null, ageMin: null };
+    if (nowSec - last.t > staleMin * 60) return base;
+
+    for (const level of [...levels].sort((a, b) => b - a)) {
+      if (Math.abs(last.pct) < level) continue;
+      const sign = Math.sign(last.pct);
+      // 가장 최근에 이 기준선 안쪽(또는 반대 부호)이었던 봉 다음 봉이 "넘은 시각"
+      let crossT = pts[0]!.t;
+      for (let i = pts.length - 1; i >= 0; i--) {
+        const p = pts[i]!;
+        if (Math.abs(p.pct) < level || Math.sign(p.pct) !== sign) {
+          crossT = pts[i + 1]?.t ?? last.t;
+          break;
+        }
+      }
+      const ageMin = (nowSec - crossT) / 60;
+      if (ageMin <= windowMin) return { ...base, level, ageMin: Math.max(0, ageMin) };
+    }
+    return base;
+  } catch (err) {
+    console.warn("Yahoo 1분봉 조회 실패:", symbol, (err as Error).message);
     return null;
   }
 }
